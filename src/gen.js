@@ -5,6 +5,11 @@ var hoursSheet;
 
 var lastInsertedDate;
 
+var DEV = true;
+
+var PUBLIC_TEMPLATE_ID = "1BnG71G8WHl3XLwKxZtjpOWtQhECC_xJ8_ALk7ZyQkTg";
+var DEV_ID = "16a4ukXaFV00BQJNlesRWDwdBDoqrq03MWn96haAePHo";
+
 function hook() {
   startDate = new moment("01-09-15 20", "MM-DD-YY HH");
   blackStartDate = new moment("01-08-15 23", "MM-DD-YY HH");
@@ -15,7 +20,13 @@ function hook() {
 }
 
 function generateSchedule(startDate,blackStartDate,blueStartDate,whiteStartDate,whiteEndDate) {
-  spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (DEV){
+    spreadsheet = SpreadsheetApp.openById(DEV_ID);
+  }
+  else{
+    templateSS = SpreadsheetApp.openById(PUBLIC_TEMPLATE_ID);
+    spreadsheet = templateSS.copy("Tenting Schedule");
+  }
   crawlerDate = startDate;
   trackingRange = [];
   offset = 0;
