@@ -21,51 +21,63 @@ function hook() {
 
 function generateSchedule(startDate,blackStartDate,blueStartDate,whiteStartDate,whiteEndDate) {
   if (DEV){
+    //access testbed spreadsheet
     spreadsheet = SpreadsheetApp.openById(DEV_ID);
   }
   else{
+    //access template spreadsheet and make a copy for the user
     templateSS = SpreadsheetApp.openById(PUBLIC_TEMPLATE_ID);
     spreadsheet = templateSS.copy("Tenting Schedule");
   }
-  crawlerDate = startDate;
+  crawlerDate = moment(startDate);
   trackingRange = [];
   offset = 0;
-  while (crawlerDate < blueStartDate){ 
+  while (startDate < blueStartDate){ 
     sheet = spreadsheet.getSheetByName("Black");
     //select 1x12 range representing each black tenting row
     //Day**Time**Slot 1**Slot 2**Empty**Slot 3**....**Slot 10
     range = sheet.getRange(dataStartRow + offset, dataStartColumn,1,13);
-    trackingRange[crawlerDate] = buildSlot(sheet,range,crawlerDate);
     if (isNight(crawlerDate)){
       while (isNight(crawlerDate)){
         crawlerDate.add(1,'h');
       }
+      trackingRange[startDate] = buildNightSlot(sheet,range,startDate,crawlerDate);
       sheet.insertRowAfter(dataStartRow + offset);
       offset++;
     }
     else{
+      trackingRange[startDate] = buildDaySlot(sheet,range,startDate,wasNight);
       crawlerDate.add(1,'h');
     }
     offset++;
+    //only want to display date in the spreadsheet following a night
+    var wasNight = isNight(startDate);
+    //reset the startDate to match the date we crawled to
+    startDate = moment(crawlerDate);
   }
   
 }
 
-function buildSlot(sheet, range, date) {
-  sheet.insertRowAfter(range.getLastRow());
+function buildNightSlot(sheet, range, dateStart, dateStop) {
   values = [];
   values[0] = [];
-  
-  if (isNight(date)){
-    values[0][0] = "";
-    values[0][1] = date.format("h a")+" - "+"EOT";
-  }
-  else{
-    formattedDate = date.format("MMMM Do");
-    values[0][0] = lastInsertedDate != formattedDate ? formattedDate : "";
-    lastInsertedDate = formattedDate;
-    values[0][1] = date.format("h a");
-  }
+  values[0][0] = "";
+  values[0][1] = dateStart.format("h a")+" - "+dateStop.format("h a");
+  buildSlot(sheet,range,values);
+}
+
+function buildDaySlot(sheet, range, date, isNewDay) {
+  values = [];
+  values[0] = [];
+  formattedDate = date.format("MMMM Do");
+  values[0][0] = isNewDay ? formattedDate : "";
+  values[0][1] = date.format("h a");
+  buildSlot(sheet,range,values);
+}
+
+function buildSlot(sheet, range, values) {
+  sheet.insertRowAfter(range.getLastRow());
+
   trackingRange = [range.getRow(),range.getLastRow(),range.getColumn(),range.getLastColumn()];
   for (i = 2; i<range.getWidth(); i++){
     values[0][i] = "";
