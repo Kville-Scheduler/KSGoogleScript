@@ -31,12 +31,17 @@ function generateSchedule(startDate,blackStartDate,blueStartDate,whiteStartDate,
   }
   crawlerDate = moment(startDate);
   trackingRange = [];
+
   offset = 0;
   while (startDate < blueStartDate){ 
     sheet = spreadsheet.getSheetByName("Black");
     //select 1x12 range representing each black tenting row
-    //Day**Time**Slot 1**Slot 2**Empty**Slot 3**....**Slot 10
-    range = sheet.getRange(dataStartRow + offset, dataStartColumn,1,13);
+    //Day**Time**[begin gridded]Slot 1**Slot 2[end gridded]**Empty**[begin gridded]Slot 3**....**Slot 10[end gridded]
+    var BLACK_WIDTH = 13;
+    var BLACK_DAY_WIDTH = 3;
+    var BLACK_NIGHT_WIDTH = 8;
+
+    range = sheet.getRange(dataStartRow + offset, dataStartColumn,1,BLACK_WIDTH);
     if (isNight(crawlerDate)){
       while (isNight(crawlerDate)){
         crawlerDate.add(1,'h');
@@ -49,6 +54,8 @@ function generateSchedule(startDate,blackStartDate,blueStartDate,whiteStartDate,
       trackingRange[startDate] = buildDaySlot(sheet,range,startDate,wasNight);
       crawlerDate.add(1,'h');
     }
+    buildGrid(sheet,range.getRow(),2,1,BLACK_DAY_WIDTH);
+    buildGrid(sheet,range.getRow(),6,1,BLACK_NIGHT_WIDTH);
     offset++;
     //only want to display date in the spreadsheet following a night
     var wasNight = isNight(startDate);
@@ -58,6 +65,18 @@ function generateSchedule(startDate,blackStartDate,blueStartDate,whiteStartDate,
   
 }
 
+/**
+Build a slot for nights covering a time interval instead of a specific hour.
+
+@param sheet
+  Google sheet
+@param range
+  Range of slot to build
+@param dateStart
+  Starting time for night slot (moment.js)
+@param dateStop
+  Stopping time for night slot (moment.js)
+*/
 function buildNightSlot(sheet, range, dateStart, dateStop) {
   values = [];
   values[0] = [];
@@ -66,6 +85,16 @@ function buildNightSlot(sheet, range, dateStart, dateStop) {
   buildSlot(sheet,range,values);
 }
 
+/**
+Build a slot for days covering a specific hour.
+
+@param sheet
+  Google sheet
+@param range
+  Range of slot to build
+@param date
+  Time for slot (moment.js)
+*/
 function buildDaySlot(sheet, range, date, isNewDay) {
   values = [];
   values[0] = [];
@@ -75,17 +104,52 @@ function buildDaySlot(sheet, range, date, isNewDay) {
   buildSlot(sheet,range,values);
 }
 
+/**
+Generic slot builder.
+
+@param sheet
+  Google sheet
+@param range
+  Range of slot to build
+@param values
+  Empty or partially completed array representing range values
+*/
 function buildSlot(sheet, range, values) {
   sheet.insertRowAfter(range.getLastRow());
 
   trackingRange = [range.getRow(),range.getLastRow(),range.getColumn(),range.getLastColumn()];
-  for (i = 2; i<range.getWidth(); i++){
+  for (i = values[0].length; i<range.getWidth(); i++){
     values[0][i] = "";
   }
   range.setValues(values);
   return trackingRange;
 }
 
+/**
+Generic grid builder.  Puts a border around every cell in a given range.
+
+@param sheet
+  Google sheet
+@param row
+  Initial row
+@param col
+  Initial col
+@param numRows
+  Number of rows
+@param numCols
+  Number of columns
+*/
+function buildGrid(sheet, row, col, numRows, numCols) {
+  var griddedDayRange = sheet.getRange(row,col,numRows,numCols);
+  griddedDayRange.setBorder(true,true,true,true,true,true);
+}
+
+/**
+Convenience method for determining if a moment.js object is a night according to k-ville policy
+
+@param date
+  Moment.js date object
+*/
 function isNight(date) {
   if (date.day() == 0){
     return date.hour() >= 2 && date.hour() < 10 || date.hour() == 23;
@@ -102,149 +166,4 @@ function isNight(date) {
   else{
     return date.hour() >= 2 && date.hour() < 10;
   }  
-}
-
-function generateScheduleOld() {
-  spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  ui = SpreadsheetApp.getUi();
-  if (spreadsheet.getSheetByName("Black") != null || spreadsheet.getSheetByName("Blue") != null || spreadsheet.getSheetByName("White") != null){
-    ui.alert("You'll need to delete the 'Black' 'Blue' and 'White' sheets before generating a schedule.");
-    return;
-  }
-  //do some cleanup
-  hoursSheet = spreadsheet.getSheetByName("Hours")
-  hoursSheet.getRange(1, 7, 13, 6).clear();
-  
-  var userStartDate = new Date(spreadsheet.getActiveSheet().getRange(8,2).getValue());
-  var userStartTime = new Date(spreadsheet.getActiveSheet().getRange(9,2).getValue());
-  userStartDate.setHours(userStartTime.getHours());
-  //black sheet creation
-  var blackStartDate = new Date(2015,0,8,23);
-  var blackEndDate = new Date(2015,0,18,23);
-  if (blackEndDate > userStartDate){
-    var blackSheet = createOrEmptySheet("Black");
-    formatSheet(blackSheet,Math.max(blackStartDate,userStartDate),blackEndDate,2,10,"Black");
-  }
-  //blue sheet creation
-  var blueStartDate = new Date(blackEndDate);
-  var blueEndDate = new Date(2015,1,1,23);
-  if (blueEndDate > userStartDate){
-    var blueSheet = createOrEmptySheet("Blue");
-    formatSheet(blueSheet,Math.max(blueStartDate,userStartDate),blueEndDate,1,6,"Blue");
-  }
-  //white sheet creation
-  var whiteStartDate = new Date(blueEndDate);
-  var whiteEndDate = new Date(2015,1,11,23);
-  var whiteSheet = createOrEmptySheet("White");
-  formatSheet(whiteSheet,Math.max(whiteStartDate,userStartDate),whiteEndDate,1,2,"White");
-}
-
-function createOrEmptySheet(name){
-  if (spreadsheet.getSheetByName(name) != null){
-    spreadsheet.deleteSheet(spreadsheet.getSheetByName(name));
-  }
-  //100 makes sure the sheet inserts after other sheets
-  var createdSheet = spreadsheet.insertSheet(name,100);
-  return createdSheet;
-}
-
-function formatSheet(sheet, startDate, endDate, dayMembers, nightMembers, tName){
-  var dayRanges = [];
-  var nightRanges = [];
-  row = 1;
-  column = 2;
-  for (var i=0; i<Math.max(dayMembers,nightMembers); i++){
-    adjustedIndex = i+1;
-    sheet.getRange(row,column).setValue("Person "+adjustedIndex);
-    sheet.getRange(row, column).setFontWeight("bold");
-    column++;
-  }
-  sheet.setFrozenRows(1);
-  row++;
-  dateIter = new Date(startDate);
-  while(dateIter < endDate){
-    sheet.getRange(row,1).setValue(dateIter.format("ddd. (mmm d)"));
-    sheet.getRange(row,1).setFontWeight("bold");
-    row++;
-    nextDate = dateIter.addDays(1);
-    newDayFlag = false;
-    while(!newDayFlag){
-      if (!dateIter.isNight()){
-        if (dateIter.getHours() == 1){
-          //slight hack for the 2:30am night start nonsense
-          sheet.getRange(row,1).setValue("1 AM - 2:30 AM");
-        }
-        else{
-          sheet.getRange(row,1).setValue(dateIter.format("h tt"));
-          sheet.getRange(row,1).setNumberFormat("h am/pm");
-        }
-        var dayHourRange = sheet.getRange(row,2,1,dayMembers);
-        dayHourRange.setBackground("yellow");
-        dayRanges.push(dayHourRange);
-        dateIter = dateIter.addHours(1);
-        row++;
-      }
-      else{
-        var nightStartText;
-        if (dateIter.getHours() == 2){
-          //slight hack for the 2:30am night start nonsense
-          nightStartText = "2:30 AM";
-        }
-        else{
-          nightStartText = dateIter.format("h TT");
-        }
-        while(dateIter.isNight()){
-          dateIter = dateIter.addHours(1);
-        }
-        newDayFlag = true;
-        nightEndText = dateIter.format("h TT");
-        sheet.getRange(row,1).setValue(nightStartText+" - "+nightEndText);
-        var nightHourRange = sheet.getRange(row,2,1,nightMembers);
-        nightHourRange.setBackground("yellow");
-        nightRanges.push(nightHourRange);
-        row++;
-      }
-    }
-  }
-  assignFormula(dayRanges,nightRanges,tName);
-}
-
-function assignFormula(dayRanges,nightRanges,tName){
-  assignFormulaForRange(dayRanges,"Day Hours",tName);
-  assignFormulaForRange(nightRanges,"Nights",tName);
-}
-
-function assignFormulaForRange(rangeArray,type,tName){
-  var hourHeader = hoursSheet.getRange(1,hourDataStartIndex);
-  hourHeader.setValue(tName+" "+type);
-  hourHeader.setFontWeight("bold");
-  for (var i=0; i<12; i++){
-    var adjustedIndex = i+2;
-    var hourSlot = hoursSheet.getRange(adjustedIndex,hourDataStartIndex);
-    var nameToCheck = hoursSheet.getRange(adjustedIndex, 2);
-    var formulaChain = "";
-    for (var j=0; j<rangeArray.length; j++){
-      if (j != 0){
-        formulaChain += "+";
-      }
-      formulaChain += "COUNTIF("+tName+"!"+rangeArray[j].getA1Notation()+","+nameToCheck.getA1Notation()+")";
-    }
-    hourSlot.setFormula(formulaChain);
-  }
-  hourDataStartIndex++;
-}
-
-//helper method for adding days to a date
-Date.prototype.addDays = function(days)
-{
-    var dat = new Date(this.valueOf());
-    dat.setDate(dat.getDate() + days);
-    return dat;
-}
-
-//helper method for adding hours to a date
-Date.prototype.addHours= function(h){
-    var dat = new Date(this.getTime());
-    dat.setHours(dat.getHours()+h);
-    return dat;
 }
