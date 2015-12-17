@@ -1,7 +1,6 @@
 var spreadsheet;
-var dataStartRow = 5;
-var dataStartColumn = 1;
-var hoursSheet;
+var file;
+var captainName;
 
 var lastInsertedDate;
 
@@ -11,15 +10,17 @@ var PUBLIC_TEMPLATE_ID = "1BnG71G8WHl3XLwKxZtjpOWtQhECC_xJ8_ALk7ZyQkTg";
 var DEV_ID = "16a4ukXaFV00BQJNlesRWDwdBDoqrq03MWn96haAePHo";
 
 function hook() {
-  startDate = new moment("01-09-15 20", "MM-DD-YY HH");
-  blackStartDate = new moment("01-08-15 23", "MM-DD-YY HH");
-  blueStartDate = new moment("01-18-15 23", "MM-DD-YY HH");
-  whiteStartDate = new moment("02-01-15 23", "MM-DD-YY HH");
-  whiteEndDate = new moment("02-11-15 23", "MM-DD-YY HH");
-  generateSchedule(startDate,blackStartDate,blueStartDate,whiteStartDate,whiteEndDate);
+
+  startDate = "2015-01-15T23:00:00.000Z"
+  blackStartDate = "2015-01-08T23:00:00.000Z"
+  blueStartDate = "2015-01-18T23:00:00.000Z"
+  whiteStartDate = "2015-02-01T23:00:00.000Z"
+  whiteEndDate = "2015-02-11T23:00:00.000Z"
+  username = "Davis Gossage"
+  generateSchedule(DEV_ID,startDate,blackStartDate,blueStartDate,whiteStartDate,whiteEndDate,username);
 }
 
-function generateSchedule(startDate,blackStartDate,blueStartDate,whiteStartDate,whiteEndDate) {
+function createSheet(){
   if (DEV){
     //access testbed spreadsheet
     spreadsheet = SpreadsheetApp.openById(DEV_ID);
@@ -29,47 +30,71 @@ function generateSchedule(startDate,blackStartDate,blueStartDate,whiteStartDate,
     templateSS = SpreadsheetApp.openById(PUBLIC_TEMPLATE_ID);
     spreadsheet = templateSS.copy("Tenting Schedule");
   }
+
+  return spreadsheet.getId();
+}
+
+function generateSchedule(spreadsheetId, startDate,blackStartDate,blueStartDate,whiteStartDate,whiteEndDate,username) {
+  //initialize dates string->moment
+  startDate = new moment(startDate);
+  blackStartDate = new moment(blackStartDate);
+  blueStartDate = new moment(blueStartDate);
+  whiteStartDate = new moment(whiteStartDate);
+  whiteEndDate = new moment(whiteEndDate);
+
+  captainName = username;
+
+  spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+  
+  //access drive file for sharing options that SpreadsheetApp doesn't offer
+  file = DriveApp.getFileById(spreadsheet.getId());
+  file.setSharing(DriveApp.Access.ANYONE,DriveApp.Permission.EDIT);
+
   crawlerDate = moment(startDate);
   trackingRange = [];
 
-  offset = 0;
-  while (startDate < blueStartDate){ 
-    sheet = spreadsheet.getSheetByName("Black");
-    //select 1x12 range representing each black tenting row
-    //Day**Time**[begin gridded]Slot 1**Slot 2[end gridded]**Empty**[begin gridded]Slot 3**....**Slot 10[end gridded]
-    var BLACK_WIDTH = 13;
-    var BLACK_DAY_WIDTH = 3;
-    var BLACK_NIGHT_WIDTH = 8;
+  var trackingRange = generateSheet("Black",startDate,blueStartDate,2,10);
+  
+  notifyParseOfCompletion(trackingRange);
+}
 
-    range = sheet.getRange(dataStartRow + offset, dataStartColumn,1,BLACK_WIDTH);
-    if (isNight(crawlerDate)){
-      while (isNight(crawlerDate)){
-        crawlerDate.add(1,'h');
-      }
-      trackingRange[startDate] = buildNightSlot(sheet,range,startDate,crawlerDate);
-      sheet.insertRowAfter(dataStartRow + offset);
-      offset++;
+function generateSheet(name,startDate,endDate,numDay,numNight) {
+  sheet = spreadsheet.getSheetByName(name);
+  var dataStartRow = 5
+  var dataStartColumn = 1
+  var offset = 0
+
+  crawlerDate = moment(startDate);
+  var wasNight = true;
+  var trackingRange = [];
+
+
+  while (startDate < endDate){
+    range = sheet.getRange(dataStartRow + offset, dataStartColumn,1,13);
+
+    //skip over the night time, will display it as a single row ex: '9PM-8AM'
+    while(isNight(crawlerDate)){
+      crawlerDate.add(1,'h')  
     }
-    else{
-      trackingRange[startDate] = buildDaySlot(sheet,range,startDate,wasNight);
-      crawlerDate.add(1,'h');
+    offset = buildSlotContent(sheet, range, startDate, crawlerDate, wasNight, offset)
+    trackingRange.push(buildSlotGridAndValidate(sheet,range,startDate,crawlerDate,numDay,numNight))
+
+    //add a single hour for the next row, unless time was added for night
+    if(!isNight(startDate)){
+      crawlerDate.add(1,'h')
     }
-    buildGrid(sheet,range.getRow(),2,1,BLACK_DAY_WIDTH);
-    buildGrid(sheet,range.getRow(),6,1,BLACK_NIGHT_WIDTH);
-    offset++;
     //only want to display date in the spreadsheet following a night
-    var wasNight = isNight(startDate);
+    wasNight = isNight(startDate);
     //reset the startDate to match the date we crawled to
     startDate = moment(crawlerDate);
   }
-  
+
+  return trackingRange
 }
 
 /**
-Build a slot for nights covering a time interval instead of a specific hour.
+Build a slot object for storing in db
 
-@param sheet
-  Google sheet
 @param range
   Range of slot to build
 @param dateStart
@@ -77,31 +102,10 @@ Build a slot for nights covering a time interval instead of a specific hour.
 @param dateStop
   Stopping time for night slot (moment.js)
 */
-function buildNightSlot(sheet, range, dateStart, dateStop) {
-  values = [];
-  values[0] = [];
-  values[0][0] = "";
-  values[0][1] = dateStart.format("h a")+" - "+dateStop.format("h a");
-  buildSlot(sheet,range,values);
-}
-
-/**
-Build a slot for days covering a specific hour.
-
-@param sheet
-  Google sheet
-@param range
-  Range of slot to build
-@param date
-  Time for slot (moment.js)
-*/
-function buildDaySlot(sheet, range, date, isNewDay) {
-  values = [];
-  values[0] = [];
-  formattedDate = date.format("MMMM Do");
-  values[0][0] = isNewDay ? formattedDate : "";
-  values[0][1] = date.format("h a");
-  buildSlot(sheet,range,values);
+function buildSlotObject(range,dateStart,dateStop) {
+  //no end date implies day slot
+  return {startRow:range.getRow(),endRow:range.getLastRow(),startColumn:range.getColumn(),
+    endColumn:range.getLastColumn(),startDate:moment(dateStart),endDate:moment(dateStop)};
 }
 
 /**
@@ -114,15 +118,43 @@ Generic slot builder.
 @param values
   Empty or partially completed array representing range values
 */
-function buildSlot(sheet, range, values) {
+function buildSlotContent(sheet, range, date, endDate, wasNight, offset) {
   sheet.insertRowAfter(range.getLastRow());
+  offset++;
 
-  trackingRange = [range.getRow(),range.getLastRow(),range.getColumn(),range.getLastColumn()];
+  values = [];
+  values[0] = [];
+  formattedDate = date.format("MMMM Do")
+  values[0][0] = wasNight ? formattedDate : ""
+  if (isNight(date)){
+    values[0][1] = date.format("h a")+" - "+endDate.format("h a")
+    sheet.insertRowAfter(range.getLastRow());
+    offset++;
+  }
+  else{
+    values[0][1] = date.format("h a")
+  }
   for (i = values[0].length; i<range.getWidth(); i++){
     values[0][i] = "";
   }
+
   range.setValues(values);
-  return trackingRange;
+
+  return offset;
+}
+
+function buildSlotGridAndValidate(sheet, range, date, endDate, numDay, numNight) {
+  //this accounts for Day and Time columns
+  TENTER_OFFSET = 2;
+
+  var numberTenting = isNight(date) ? numNight : numDay;
+
+  buildGrid(sheet, range.getRow(), range.getColumn() + TENTER_OFFSET, 1, numberTenting);
+
+  var validatedRange = sheet.getRange(range.getRow(), range.getColumn() + TENTER_OFFSET, 1, numberTenting);
+  appendNamesToCellValidation([captainName],validatedRange)
+
+  return buildSlotObject(validatedRange,date,endDate)
 }
 
 /**
@@ -142,6 +174,51 @@ Generic grid builder.  Puts a border around every cell in a given range.
 function buildGrid(sheet, row, col, numRows, numCols) {
   var griddedDayRange = sheet.getRange(row,col,numRows,numCols);
   griddedDayRange.setBorder(true,true,true,true,true,true);
+
+  //hack for setting border color
+  //feature request at https://code.google.com/p/google-apps-script-issues/issues/detail?id=2002
+  /*
+  broken pending copyFormatToRange fix
+  https://code.google.com/p/google-apps-script-issues/issues/detail?id=5304
+  var firstCell = sheet.getRange(1,1);
+  firstCell.copyFormatToRange(sheet,row,col,numRows,numCols);
+  */
+}
+
+function appendNamesToCellValidation(names, range) {
+  var rule = range.getDataValidation();
+  if (rule == null){
+    rule = SpreadsheetApp.newDataValidation().requireValueInList(names).setAllowInvalid(false);
+  }
+  else{
+    ruleBuilder = rule.copy()
+    var allNames = rule.getCriteriaValues()
+    allNames.push(names)
+    ruleBuilder.requireValueInList(allNames)
+    rule = ruleBuilder.build()
+  }
+  range.setDataValidation(rule);
+}
+
+function notifyParseOfCompletion(trackingRange) {
+  
+  var headers = {
+    "X-Parse-Application-Id" : PropertiesService.getScriptProperties().getProperty('PARSE_APPLICATION_ID'),
+    "X-Parse-REST-API-Key" : PropertiesService.getScriptProperties().getProperty('PARSE_REST_API_KEY'),
+    "Content-Type" : "application/json"
+  };
+  
+  var payload = {
+    "jsonSlots" : JSON.stringify(trackingRange)
+  }
+
+  var options = {
+    "method" : "post",
+    "headers" : headers,
+    "payload" : payload
+  }
+
+  UrlFetchApp.fetch("https://api.parse.com/1/functions/recordSlots",options)
 }
 
 /**
